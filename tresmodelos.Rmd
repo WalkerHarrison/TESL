@@ -1,6 +1,6 @@
 ---
 title: "Tres Modelos"
-author: ""
+author: "J. Moreno"
 date: ""
 output: html_document
 ---
@@ -90,7 +90,7 @@ A diferencia de los problemas de clasificación de la vida real, en esta oportun
 
 Una primera aproximación podría ser simplemente intentar dibujarla a ojo sobre el plano. Haga el intento.
 
-En los siguientes dos apartados estudiaremos dos formas básicas para establecer procedimientos de clasificación.
+En los siguientes apartados estudiaremos dos formas básicas para establecer procedimientos de clasificación.
 
 
 ```{r}
@@ -141,7 +141,7 @@ intercept_slope <- function(model){
   slope <- -cf[2]/cf[3]
   return(c(intercept, slope))
 }
-model <- linear_model
+
 # Esta función genera un gráfico dado un modelo, una muestra de puntos naranjas y azules y un látice:
 plot_linear_model <- function(samp, model, grid){
   grid$color <- apply(grid[,1:2], 1, function(x) linear_classifier(x, model))
@@ -350,7 +350,7 @@ ggplot(grid, aes(X1, X2, z=color)) +
 
 El error del clasificador de Bayes en la muestra de evaluación es `r classification_error(test_sample$color_number, apply(test_sample[,1:2], 1, bayes_classifier))`. Apenas un poco mayor a la del clasificador de los $35$-vecinos cercanos. Dada la forma en la que es constuido el clasificador de Bayes sabemos que en promedio, si consideramos muchas muestras distintas, el error será menor que el del clasificador de los $35$-vecinos cercanos. El libro llama _error óptimo de Bayes_ al valor esperado del error para el clasificador de Bayes. 
 
-Para calcular el valor exacto de este error tendría que integrar funciones de densidad sobre las dos áreas que demarca el clasificador. Como no tengo ni idea de cómo hacer eso, un método alternativo (no sé qué tan acertado) podría ser calcular el promedio de los errores para una serie grande de muestras. Como eso tarda, pregeneré una muestra de 100.000 puntos coloreados y para cada uno calculé su clasificación según Bayes: 
+Para calcular el valor exacto de este error tendría que integrar funciones de densidad sobre las dos áreas que demarca el clasificador. Como no tengo ni idea de cómo hacer eso, un método alternativo (no sé qué tan acertado) podría ser calcular el promedio de los errores para una serie grande de muestras. Como eso tarda, pregeneré [una muestra de 100.000 puntos coloreados](https://github.com/finiterank/TESL/blob/master/super.sample.Rda) y para cada uno calculé su clasificación según Bayes: 
 
 ```{r ,  fig.height=7, fig.width=8, fig.align='center'}
 # Carguemos super_sample:
@@ -366,7 +366,7 @@ super_sample$cumerror <- cumsum(super_sample$comp)/1:nrow(super_sample)
 ggplot(super_sample, aes(x=1:nrow(super_sample), y=cumerror)) + geom_line(color="goldenrod2") + theme_bw() + xlab("Tamaño de muestra") + ylab("Error")
 ```
 
-El error promedio de esta pila de 100.000 muestras es `r mean(super_sample$cumerror)`. Más o menos ese es el valor del error óptimo.
+El error promedio de esta pila de 100.000 muestras es `r mean(super_sample$cumerror)`. Más o menos (creo) ese es el valor del error óptimo.
 
 Por comparar hagamos el mismo procedimiento usando el clasificador de los $35$-vecinos cercanos y miremos cómo se comporta el error a medida que la muestra crece:
 
