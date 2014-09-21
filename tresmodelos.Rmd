@@ -1,0 +1,390 @@
+---
+title: "Tres Modelos"
+author: ""
+date: ""
+output: html_document
+---
+
+Esta es una lectura digerida de un fragmento del capítulo 2 de [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) de Hastie, Tibshirani y Friedman. Había algunos detalles que no tenía claros y reproducir lo que hacen me ayuda a entender. 
+
+Aunque [el paquete `ElemStatLearn`](http://cran.r-project.org/web/packages/ElemStatLearn/index.html) incluye los datos usados (`mixture.example`), para tener mayor control sobre los cálculos en este resumen los genero desde cero siguiendo el procedimiento que describe el capítulo. 
+
+
+```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
+library(MASS)
+library(ggplot2)
+library(class)
+library(nnet)
+library(reshape2)
+library(mnormt)
+```
+
+## Descripción general del problema
+
+Dos procedimientos aleatorios particulares producen puntos azules y naranjas respectivamente. Dada una muestra de $2N$ puntos (la mitad naranjas y la mitad azules) nuestro propósito es desarrollar una estrategia para decidir de cuál de los dos procedimientos proviene un nuevo punto. 
+
+## Puntos azules y naranjas
+
+* Azules: primero sacamos 10 puntos $b_k$ ($k=1,2, \ldots, 10$) de [una distribución normal bivariada](http://en.wikipedia.org/wiki/Multivariate_normal_distribution) con media $(1,0)$ y matriz de covarianza $$\mathbf{I} = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}.$$ Para producir un punto azul elegimos un $b_k$ al azar con probabilidad uniforme para cada $k$ y generamos un punto de una distribución normal con media $b_k$ y matriz de covarianza $\mathbf{I}/5$. 
+* Naranjas: primero sacamos 10 puntos $n_k$ ($k=1,2, \ldots, 10$) de una distribución normal bivariada con media $(0,1)$ y matriz de covarianza $\mathbf{I}$. Para producir un punto naranja elegimos un $n_k$ al azar con probabilidad uniforme para cada $k$ y generamos un punto de una distribución normal con media $n_k$ y matriz de covarianza $\mathbf{I}/5$. 
+
+Hagámoslo a mano:
+
+```{r}
+# Una semilla en el generador aleatorio para que todos veamos lo mismo.
+set.seed(0)
+
+# La matriz de covarianza de las dos distribuciones de centroides:
+Sigma <- diag(1,2)
+
+# Los centros de las distribuciones de centroides:
+blue_centre <- c(1,0)
+orange_centre <- c(0,1)
+
+# Generemos los centroides:
+blue_centroids <- mvrnorm(n=10, blue_centre, Sigma)
+orange_centroids <- mvrnorm(n=10, orange_centre, Sigma)
+
+# La función que sigue genera tantas observaciones como uno quiera de la población que elija dados los centroides y la matriz de covarianza de la distribución generadora (I/5 en este caso):
+observation_generator <- function(means, sigma, number){
+  D <- matrix(nrow=0, ncol=ncol(means))
+  for(i in 1:number){  
+    D <- rbind(D, mvrnorm(n=1, means[sample(1:10, 1),], sigma))
+  }
+  return(D)
+}
+
+# Esta función genera una población de tamaño 2*number con la mitad azules y la mitad naranjas:
+population_generator <- function(number){
+  blue <- data.frame(observation_generator(blue_centroids, Sigma/5, number), color="blue")
+  orange <- data.frame(observation_generator(orange_centroids, Sigma/5, number), color="orange")
+  observations <- rbind(blue, orange)
+  
+# Por razones prácticas conviene codificar los colores como números. Siguiendo la notación del libro  digamos que el azul es $0$ y el naranja es $1$. 
+
+  observations$color_number <- as.numeric(observations$color) - 1
+  return(observations)
+}
+
+# Generemos una muestra de entrenamiento de 200 puntos y una muestra de evaluación de 10000 puntos:
+training_sample <- population_generator(100)
+test_sample <- population_generator(5000)
+```
+
+¿Cómo luce nuestra muestra de entrenamiento? (Por lo pronto no miremos nuestra muestra de evaluación para no condicionar las estimaciones a ojo que hagamos.)
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+plot_population <- function(pop){
+  ggplot(pop, aes(x=X1, y=X2, col=color)) + 
+    geom_point() + 
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) + 
+    theme_bw() + xlab("x") + ylab("y")
+}
+
+plot_population(training_sample)
+```
+
+El ejercicio consiste, entonces, en tomar esta muestra de entrenamiento y proponer una frontera o conjunto de fronteras que decidan con tan bajo nivel de error como sea posible (el error medido como la fracción de puntos mal clasificados) cuáles puntos serían azules y cuáles serían naranjas en cualquier otra muestra de la misma población. 
+
+A diferencia de los problemas de clasificación de la vida real, en esta oportunidad contamos con una descripción precisa de la distribución de los puntos naranjas y azules, pero imaginemos por un rato que no la tenemos a mano. ¿Qué opciones tenemos para demarcar la frontera?
+
+Una primera aproximación podría ser simplemente intentar dibujarla a ojo sobre el plano. Haga el intento.
+
+En los siguientes dos apartados estudiaremos dos formas básicas para establecer procedimientos de clasificación.
+
+
+```{r}
+# Conviene tener a mano un látice de puntos uniformemente distribuidos en el área del plano cubierta por las muestras consideradas:
+grid_generator <- function(training, test, grid.size){
+  x.vals <- seq(min(c(training[,1], test[,1])), max(c(training[,1], test[,1])), len=grid.size)
+  y.vals <- seq(min(c(training[,2], test[,2])), max(c(training[,2], test[,2])), len=grid.size)
+  data.grid <- data.frame(expand.grid(x.vals, y.vals)) 
+  colnames(data.grid) <- c("X1", "X2")
+  return(data.grid)
+}
+
+# Hagámoslo de 100 x 100:
+grid.size <- 100
+grid <- grid_generator(training_sample, test_sample, grid.size)
+```
+
+## Primera aproximación: modelo lineal
+
+La primera aproximación consiste en proponer una frontera dada por un polinomio lineal. Es decir, usar la muestra de entrenamiento para buscar un vector $\beta = (\beta_0, \beta_1, \beta_2)'$, definir una función sobre los puntos del plano: $$f \colon (x,y)' \mapsto \langle(1,x,y), \beta\rangle = \beta_0 + \beta_1 x + \beta_2 y$$ y decir que $(x,y)$ es naranja o azul dependiendo del valor de $f(x,y)$: $$C(x,y) = \begin{cases} \mbox{Naranja (1)} &\mbox{si } f(x,y) > 0.5 \\ 
+\mbox{Azul (0)} & \mbox{si  } f(x,y) \leq 0.5 \end{cases}$$
+
+La gracia es elegir $\beta$ de tal forma que en la muestra de entrenamiento el error de clasificación del procedimiento correspondiente al $\beta$ elegido sea el mínimo posible. 
+
+No importa cuál sea el $\beta$ la frontera será una línea recta (Ejercicio: ¿cuál?). En el caso del $\beta$ que minimiza el error la frontera será la línea que mejor divide a los naranjas de los azules. De nuevo, no viene mal usar una regla e intentar estimar al ojo cuál sería esa línea en nuestro caso para comparar con el resultado analítico:
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+# La línea a continuación calcula el modelo lineal usando la muestra de entrenamiento como gimnasio:
+linear_model <- lm(color_number ~ X1 + X2, training_sample)
+
+# Esta función calcula, dado el modelo lineal y un punto, cuál es su código de color de acuerdo al procedimiento descrito más arriba:
+linear_classifier <- function(point, model){
+  expanded_point <- c(1, point)
+  beta <- coef(model)
+  fxy <- expanded_point %*% beta
+  if(fxy > 0.5){
+    return(1)
+  }
+  else{
+    return(0)
+  }
+}
+
+# Dado un modelo lineal, esta función calcula valores a (slope) y b (intercept) tal que la frontera es dada por la línea y = ax+b.
+intercept_slope <- function(model){
+  cf <- coef(model)
+  intercept <- -(cf[1] - 0.5)/cf[3]
+  slope <- -cf[2]/cf[3]
+  return(c(intercept, slope))
+}
+model <- linear_model
+# Esta función genera un gráfico dado un modelo, una muestra de puntos naranjas y azules y un látice:
+plot_linear_model <- function(samp, model, grid){
+  grid$color <- apply(grid[,1:2], 1, function(x) linear_classifier(x, model))
+  insl <- intercept_slope(model)
+  ggplot(grid, aes(x=X1, y=X2)) +
+    geom_point(aes(fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) +
+    geom_point(data=samp, aes(x=X1, y=X2, col=color)) +
+    geom_abline(intercept=insl[1], slope=insl[2], color="red") +
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    theme_bw() + xlab("x") + ylab("y") 
+}
+
+plot_linear_model(training_sample, linear_model, grid)
+```
+
+¿Y cómo calculamos los errores?
+
+```{r}
+# Como ya dije: el error de clasificación es la fracción de malas clasificaciones sobre el total de puntos evaluados.
+classification_error <- function(observed, predictions){
+  return(mean(as.numeric(observed != predictions)))
+}
+
+linear_predictor <- function(x) linear_classifier(x, linear_model)
+
+classification_error_linear <- function(data, predictor){
+  predictions <- apply(data[,1:2], 1, predictor)
+  return(classification_error(data$color_number, predictions))
+}
+  
+# Error muestra entrenamiento modelo lineal
+error_training_linear <- classification_error_linear(training_sample, linear_predictor)
+
+# Error muestra evaluación modelo lineal
+error_test_linear <- classification_error_linear(test_sample, linear_predictor)
+```
+
+El error de clasificación para la muestra de entrenamiento es `r error_training_linear` y para la muestra de evaluación es `r error_test_linear`.
+
+## Segunda aproximación: la presión de los vecinos
+
+La segunda aproximación son los modelos de clasificación de vecinos cercanos. En estos modelos se elige $k\in\mathbb{N}$  (ojalá impar, para facilitar las vainas) y para cada punto en el plano se revisa cuáles son los $k$ puntos en la muestra de entrenamiento que están más cerca al punto considerado, sus vecinos distinguidos. Una vez con esos $k$ puntos a la mano se revisa quién es mayoría ahí, los azules o los naranjas, y se le asigna al punto ese color. 
+
+Empecemos revisando qué pasa cuando $k=1$:
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+
+# Esta función calcula la predicción para cualquier muestra de puntos de la población dada la muestra de entrenamiento elegida y con k arbitrario.
+predictions_knn <- function(data, k){
+  output <- knn(training_sample[,1:2],data[,1:2], training_sample[,4], k=k)
+  return(as.numeric(as.character(output)))
+}
+
+# Esta función genera un gráfico con una muestra y la clasificación basada en la muestra de entrenamiento y con k = k.
+plot_knn_model <- function(samp, grid, k){
+  grid$color <- predictions_knn(grid, k)
+  ggplot(grid, aes(X1, X2, z=color)) +  
+    geom_point(aes(X1, X2, fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) +
+    geom_point(data=samp, aes(x=X1, y=X2, col=color)) + 
+    stat_contour(color="red", bins=1) +
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    theme_bw() + xlab("x") + ylab("y") 
+}
+
+plot_knn_model(training_sample, grid, 1)
+```
+
+¿Qué tal le va a este modelo?
+
+```{r}
+classification_error_knn <- function(data, k){
+  return(classification_error(data$color_number, predictions_knn(data, k)))
+}
+
+error_training_knn1 <- classification_error_knn(training_sample, 1)
+
+error_test_knn1 <- classification_error_knn(test_sample, 1)
+```
+
+Con $k=1$ el error en la muestra de entrenamiento es `r error_training_knn1` y el error en la muestra de evaluación es `r error_test_knn1` (sustancialmente mayor que el que logra el modelo lineal). Que el error en la muestra de entrenamiento sea cero no debe sorprendernos: como $k=1$ entonces cada punto de la muestra de entrenamiento se elige a sí mismo con el vecino distinguido y se otorga la misma clasificación que ya tiene. Por la misma razón tampoco debe sorprendernos que este modelo tenga un nivel de error alto con cualquier otra muestra diferente de la de entrenamiento: se concentra demasiado en la configuración particular de la muestra de entrenamiento.
+
+Intentemos algo menos radical: 
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+
+
+error_training_knn15 <- classification_error_knn(training_sample, 15)
+
+error_test_knn15 <- classification_error_knn(test_sample, 15)
+plot_knn_model(training_sample, grid, 15)
+```
+
+Con $k=15$ el modelo de los vecinos no se deja llevar tan fácilmente por los caprichos de la muestra de entrenamiento y por lo mismo más acertado: su error de clasificación para la muestra de entrenamiento es `r error_training_knn15` y para la muestra de evaluación es `r error_test_knn15`. Le va mejor que al lineal.
+
+## Libertades y errores
+
+Al comparar varios modelos conviene a veces pensar qué tan complicados de calcular son. Por ejemplo: cuántas variables se requiere encontrar para fijarlos. A este número se le conoce como [los grados de libertad](http://en.wikipedia.org/wiki/Degrees_of_freedom_(statistics)). El modelo lineal que consideramos arriba, por ejemplo, tres grados de libertad (las coordenadas de $\beta$). ¿Qué hay de los modelos de vecinos cercanos? 
+
+Pensemos: si $k=1$ cada uno de los puntos de la muestra de entrenamiento determina una variable. En cambio, si $k$ es precisamente el número de puntos en la muestra de entrenamiento a todos los puntos se les asigna el color de la mayoría. Entre mayor el $k$ menos grados de libertad. Así, parecería que una medida apropiada de los grados de libertad en un modelo de $k$-vecinos cercanos basado en una muestra de entrenamiento de tamaño $N$ es $N/k$. Con esto en mente hagamos una gráfica comparando los errores de varios modelos de vecinos cercanos y de paso el modelo lineal:
+
+```{r, fig.height=7, fig.width=8, fig.align='center'}
+# Este función recolecta errores de los modelos de k-vecinos cercanos para un conjunto dado de ks:
+error_collector <- function(ks){
+  D <- matrix(nrow=0, ncol=3)
+  for(k in ks){  
+    error_training_knn <- classification_error_knn(training_sample, k)
+    error_test_knn <- classification_error_knn(test_sample, k)
+    D <- rbind(D, c(k, error_training_knn, error_test_knn))
+  }
+  D <- as.data.frame(D)
+  names(D) <- c("k", "error.training", "error.test")
+  D$degrees <- 200/D$k
+  return(D)
+}
+
+# Calculemos los errores para k = 2n-1 con n = 1, 2, ..., 100:
+errors <- error_collector(1:100 * 2 - 1)
+
+# De una calculemos cuál es el k (entre los considerados) para el cual el error de clasificación en la muestra de evaluación es el menor:
+
+best_k <- errors[errors$error.test == min(errors$error.test),]
+
+# Grados de libertad del modelo lineal
+lm.df <- 3
+
+# Ahora hagamos un gráfico:
+errors <- melt(errors, id.vars = c("k", "degrees"))
+plot_errores <- ggplot(errors, aes(x=degrees, y=value, col=variable)) + 
+  geom_line(method="loess", size = .8, alpha=0.4) + 
+  geom_smooth(method="loess", size = 1, se = FALSE) + 
+  scale_x_log10() + theme_bw() + theme(legend.position="bottom") +
+  xlab("Grados de Libertad (N/k)") + ylab("Error") +
+  scale_color_discrete(name="Muestra", labels=c("Entrenamiento", "Evaluación")) +
+  geom_point(data=data.frame(x=lm.df, y=error_training_linear), aes(x=x,y=y), color="firebrick1", shape= 15, size=5) +
+  geom_point(data=data.frame(x=lm.df, y=error_test_linear), aes(x=x,y=y), color="chartreuse3", shape= 15, size=5) + 
+  annotate("text", x =lm.df, y = error_training_linear - 0.015, label = "Error modelo lineal\n (entrenamiento)", size=4) +
+  annotate("text", x =lm.df, y = error_test_linear + 0.015, label = "Error modelo lineal\n (evaluación)", size=4)
+
+plot_errores
+```
+
+Las curvas azul aguamarino y roja clara son versiones suavizadas de las curvas de error (atrás difuminadas) de los modelos de vecinos cercanos para $k=2n-1$ con $n=1,2, \ldots, 100$ pero en lugar de $k$ uso los grados de libertad de cada modelo (en este caso 200/k) y lo escalo logarítmicamente. 
+
+Como se espera, a medida que los grados de libertad aumentan el modelo se vuelve mejor y mejor _entendiendo_ la muestra de entrenamiento. 
+
+Con la muestra de evaluación la historia es distinta: al principio ($k=199$) y al final ($k=1$) el error es alto, sobre 0.2, pero en el intermedio se reduce hasta alcanzar su mínimo entre los $5$ y los por ahí $8$ grados de libertad. Para ser exactos se alcanza, entre los $k$ considerados, cuando $k$ es `r best_k[1]` (`r best_k[4]` grados de libertad). El error en la muestra de evaluación para ese modelo es `r best_k[3]`. Para comparar añadí también (tal y como en el libro) dos cuadrados con los errores del modelo lineal (posicionados en tres grados de libertad).
+
+Así las cosas, el mejor modelo que tenemos a nuestra disposición (usando la muestra de entrenamiento con la que arrancamos) es el de 35-vecinos cercanos. Es un poco más complicado (en grados de libertad) que el lineal, pero la mejora en puntería es digna. Aquí su gráfica correspondiente marcada en la muestra de evaluación:
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+plot_knn_model(test_sample, grid, 35)
+```
+
+# Aproximación ideal: el mejor modelo de todos
+
+Como dije al principio, en los modelos que hemos considerado obviamos un hecho crucial: en este caso contamos con una descripción precisa de la distribución de nuestros puntos azules y naranjas. Podemos, por ejemplo, calcular la probabilidad de que un punto sea naranja o azul de acuerdo a sus respectivas funciones de densidad: dado que cada punto azul o naranja es generado de una normal bivariada elegida al azar entre diez posibles, entonces la densidad para el color C en cada punto es el promedio de las densidades de cada una de las diez distribuciones normales asignadas al color C. 
+
+Esta observación nos permite, por ejemplo, hacer un gráfico de curvas de nivel (de probabilidad) para las dos poblaciones (marquemos de paso los centroides de cada color):
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+
+# Función de densidad dados los centroides y una matriz de covarianza:
+prob <- function(centroids, sigma){
+  return(function(point) mean(apply(centroids, 1, function(x) dmnorm(point, x, sigma))))  
+}
+
+# Para los azules:
+prob_blue <- prob(blue_centroids, Sigma/5)
+
+# Para los naranjas:
+prob_orange <- prob(orange_centroids, Sigma/5)
+
+# Calculemos la probabilidad para cada color para cada punto del látice.
+grid$blue.prob <- apply(grid[,1:2], 1, prob_blue)
+grid$orange.prob <- apply(grid[,1:2], 1, prob_orange)
+
+ggplot(grid, aes(x=X1, y=X2)) + 
+  geom_contour(aes(z=blue.prob), color="dodgerblue2") + 
+  geom_contour(aes(z=orange.prob), color="orange") + 
+  geom_point(data=data.frame(blue_centroids), aes(x=X1, y=X2), color="dodgerblue2", shape=15, size=2.5) + 
+  geom_point(data=data.frame(orange_centroids), aes(x=X1, y=X2), color="orange", shape=15, size=2.5) + 
+  theme_bw() + xlab("x") + ylab("y")
+```
+
+Dado que tenemos acceso a estas funciones de densidad entonces existe un modelo adicional, un modelo que no depende de datos para ser calculado, que de cierta forma hace la mejor tarea posible como clasificador: dado un punto en el plano, calcule las dos funciones de probabilidad y asigne el color de acuerdo a la que le dé el valor más alto. Ningún otro modelo puede hacer una tarea mejor (en promedio) clasificando muestras de esta población. A este modelo lo llaman en el libro _clasificador de Bayes_. (Ejercicio: calcule explícitamente la frontera del clasificador de Bayes si la distribución de cada color es una normal bivariada con covarianza $\alpha\mathbf{I}$ y centros en $(2,3)$ (para azules) y $(3,2)$ (para naranjas).)
+
+Veamos cuál es la gráfica del clasificador de Bayes para nuestro ejemplo concreto (pongámosle la muestra de evaluación debajo):
+
+```{r,  fig.height=7, fig.width=7, fig.align='center'}
+# La función clasificadora:
+bayes_classifier <- function(point){
+  return(ifelse(prob_blue(point) >=  prob_orange(point), 0, 1))
+}
+
+grid$color <- apply(grid[,1:2], 1, bayes_classifier)
+ggplot(grid, aes(X1, X2, z=color)) +  
+  geom_point(aes(X1, X2, fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) + 
+  geom_point(data=test_sample, aes(x=X1, y=X2, col=color)) +
+  stat_contour(bins=1, color="red") +
+  scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+  scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+  theme_bw() + xlab("x") + ylab("y") 
+```
+
+El error del clasificador de Bayes en la muestra de evaluación es `r classification_error(test_sample$color_number, apply(test_sample[,1:2], 1, bayes_classifier))`. Apenas un poco mayor a la del clasificador de los $35$-vecinos cercanos. Dada la forma en la que es constuido el clasificador de Bayes sabemos que en promedio, si consideramos muchas muestras distintas, el error será menor que el del clasificador de los $35$-vecinos cercanos. El libro llama _error óptimo de Bayes_ al valor esperado del error para el clasificador de Bayes. 
+
+Para calcular el valor exacto de este error tendría que integrar funciones de densidad sobre las dos áreas que demarca el clasificador. Como no tengo ni idea de cómo hacer eso, un método alternativo (no sé qué tan acertado) podría ser calcular el promedio de los errores para una serie grande de muestras. Como eso tarda, pregeneré una muestra de 100.000 puntos coloreados y para cada uno calculé su clasificación según Bayes: 
+
+```{r ,  fig.height=7, fig.width=8, fig.align='center'}
+# Carguemos super_sample:
+load("super.sample.Rda")
+
+# Comparemos la predicción de Bayes y el color de los puntos (1 si son distintos y 0 en caso contrario):
+super_sample$comp <- as.numeric(super_sample$color_number != super_sample$bayes)
+
+# Ahora, para N=1, ..., 100.000 calculemos el error de la muestra desde el punto 1 hasta N:
+super_sample$cumerror <- cumsum(super_sample$comp)/1:nrow(super_sample)
+
+# Finalmente hagamos una gráfica del error: 
+ggplot(super_sample, aes(x=1:nrow(super_sample), y=cumerror)) + geom_line(color="goldenrod2") + theme_bw() + xlab("Tamaño de muestra") + ylab("Error")
+```
+
+El error promedio de esta pila de 100.000 muestras es `r mean(super_sample$cumerror)`. Más o menos ese es el valor del error óptimo.
+
+Por comparar hagamos el mismo procedimiento usando el clasificador de los $35$-vecinos cercanos y miremos cómo se comporta el error a medida que la muestra crece:
+
+```{r,  fig.height=7, fig.width=8, fig.align='center'}
+super_sample$knn35 <- predictions_knn(super_sample, 35)
+super_sample$comp.knn <- as.numeric(super_sample$color_number != super_sample$knn35)
+super_sample$cumerror.knn <- cumsum(super_sample$comp.knn)/1:nrow(super_sample)
+ssamp <- data.frame(index = 1:nrow(super_sample), super_sample[, c("cumerror.knn", "cumerror")]) 
+ssamp <- melt(ssamp, id.vars = "index")
+ggplot(ssamp, aes(x=index, y=value, col=variable)) + geom_line() + theme_bw() + xlab("Tamaño de muestra") + ylab("Error") + scale_color_discrete(name="Modelo", labels=c("35-vecinos cercanos", "Clasificador de Bayes")) + theme(legend.position="bottom")
+```
+
+Bayes, como dicta la teoría, se impone. El error promedio de $35$-vecinos cercanos es `r mean(super_sample$cumerror.knn)`, ligeramente superior.
+
+Para terminar, volvamos a la gráfica que comparaba los diferentes errores de los modelos considerados y añadamos una línea marcando este valor: 
+
+```{r,  fig.height=7, fig.width=8, fig.align='center'}
+plot_errores + geom_abline(slope=0, intercept=mean(super_sample$cumerror), color="red", linetype="dashed", alpha=0.6) + annotate("text", x=100, y=mean(super_sample$cumerror)+0.006, label="Error óptimo de Bayes (estimado)", size=4)
+```
+
+Por supuesto, afuera no hay distribuciones explícitas a las cuales recurrir para construir el modelo imbatible, así que el juego del analista consiste en inferir, a partir de los datos disponibles, características de la distribución de la población que mejoren su chance de encontrar/construir un modelo suficientemente bueno, tan cercano al ideal de Bayes como sea posible.
