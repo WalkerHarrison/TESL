@@ -1,11 +1,11 @@
 ---
 title: "Tres Modelos"
 author: "J. Moreno"
-date: ""
+date: "20 de septiembre de 2014"
 output: html_document
 ---
 
-Esta es una lectura digerida de un fragmento del capítulo 2 de [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) de Hastie, Tibshirani y Friedman. Había algunos detalles que no tenía claros y reproducir lo que hacen me ayuda a entender. 
+Esta es una lectura digerida de un fragmento del capítulo 2 de [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) de Hastie, Tibshirani y Friedman. Había algunos detalles que no tenía claros y reproducir lo que hacen me ayuda a entender. [Este](https://github.com/finiterank/TESL) es el repositorio con código y datos generados.
 
 Aunque [el paquete `ElemStatLearn`](http://cran.r-project.org/web/packages/ElemStatLearn/index.html) incluye los datos usados (`mixture.example`), para tener mayor control sobre los cálculos en este resumen los genero desde cero siguiendo el procedimiento que describe el capítulo. 
 
@@ -126,12 +126,7 @@ linear_classifier <- function(point, model){
   expanded_point <- c(1, point)
   beta <- coef(model)
   fxy <- expanded_point %*% beta
-  if(fxy > 0.5){
-    return(1)
-  }
-  else{
-    return(0)
-  }
+  return(ifelse(fxy > 0.5, 1, 0))
 }
 
 # Dado un modelo lineal, esta función calcula valores a (slope) y b (intercept) tal que la frontera es dada por la línea y = ax+b.
