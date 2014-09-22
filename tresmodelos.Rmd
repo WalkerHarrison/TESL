@@ -2,7 +2,10 @@
 title: "Tres Modelos"
 author: "J. Moreno"
 date: "20 de septiembre de 2014"
-output: html_document
+output:
+  html_document:
+    mathjax: http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML
+
 ---
 
 Esta es una lectura digerida de un fragmento del capítulo 2 de [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) de Hastie, Tibshirani y Friedman. Había algunos detalles que no tenía claros y reproducir lo que hacen me ayuda a entender. [Este](https://github.com/finiterank/TESL) es el repositorio con código y datos generados.
@@ -29,7 +32,8 @@ Dos procedimientos aleatorios particulares producen puntos azules y naranjas res
 * Azules: primero sacamos 10 puntos $b_k$ ($k=1,2, \ldots, 10$) de [una distribución normal bivariada](http://en.wikipedia.org/wiki/Multivariate_normal_distribution) con media $(1,0)$ y matriz de covarianza $$\mathbf{I} = \begin{pmatrix} 1 & 0 \\ 0 & 1 \end{pmatrix}.$$ Para producir un punto azul elegimos un $b_k$ al azar con probabilidad uniforme para cada $k$ y generamos un punto de una distribución normal con media $b_k$ y matriz de covarianza $\mathbf{I}/5$. 
 * Naranjas: primero sacamos 10 puntos $n_k$ ($k=1,2, \ldots, 10$) de una distribución normal bivariada con media $(0,1)$ y matriz de covarianza $\mathbf{I}$. Para producir un punto naranja elegimos un $n_k$ al azar con probabilidad uniforme para cada $k$ y generamos un punto de una distribución normal con media $n_k$ y matriz de covarianza $\mathbf{I}/5$. 
 
-Hagámoslo a mano:
+Generemos una muestra de entrenamiento de 200 puntos para construir clasificadores y otra muestra de 10.000 puntos para evaluarlos: 
+
 
 ```{r}
 # Una semilla en el generador aleatorio para que todos veamos lo mismo.
