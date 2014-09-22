@@ -272,16 +272,16 @@ plot_errores <- ggplot(errors, aes(x=degrees, y=value, col=variable)) +
   geom_smooth(method="loess", size = 1, se = FALSE) + 
   scale_x_log10() + theme_bw() + theme(legend.position="bottom") +
   xlab("Grados de Libertad (N/k)") + ylab("Error") +
-  scale_color_discrete(name="Muestra", labels=c("Entrenamiento", "Evaluación")) +
-  geom_point(data=data.frame(x=lm.df, y=error_training_linear), aes(x=x,y=y), color="firebrick1", shape= 15, size=5) +
-  geom_point(data=data.frame(x=lm.df, y=error_test_linear), aes(x=x,y=y), color="chartreuse3", shape= 15, size=5) + 
+  scale_color_manual(name="Muestra", labels=c("Entrenamiento", "Evaluación"), values=c("forestgreen", "firebrick2")) +
+  geom_point(data=data.frame(x=lm.df, y=error_training_linear), aes(x=x,y=y), color="forestgreen", shape= 15, size=5) +
+  geom_point(data=data.frame(x=lm.df, y=error_test_linear), aes(x=x,y=y), color="firebrick2", shape= 15, size=5) + 
   annotate("text", x =lm.df, y = error_training_linear - 0.015, label = "Error modelo lineal\n (entrenamiento)", size=4) +
   annotate("text", x =lm.df, y = error_test_linear + 0.015, label = "Error modelo lineal\n (evaluación)", size=4)
 
 plot_errores
 ```
 
-Las curvas azul aguamarino y roja clara son versiones suavizadas de las curvas de error (atrás difuminadas) de los modelos de vecinos cercanos para $k=2n-1$ con $n=1,2, \ldots, 100$ pero en lugar de $k$ uso los grados de libertad de cada modelo (en este caso 200/k) y lo escalo logarítmicamente. 
+Las curvas verde y roja son versiones suavizadas de las curvas de error (atrás difuminadas) de los modelos de vecinos cercanos para $k=2n-1$ con $n=1,2, \ldots, 100$ pero en lugar de $k$ uso los grados de libertad de cada modelo (en este caso 200/k) y lo escalo logarítmicamente. Los dos cuadrados son los valores de los errores para el modelo lineal en la muestra de entrenamiento y la muestra de evaluación.
 
 Como se espera, a medida que los grados de libertad aumentan el modelo se vuelve mejor y mejor _entendiendo_ la muestra de entrenamiento. 
 
@@ -385,7 +385,7 @@ ggplot(super_sample, aes(x=1:nrow(super_sample), y=cumerror)) +
 
 El error promedio de esta pila de 100.000 muestras es `r mean(super_sample$cumerror)`. No muy distinto del que produce la integración.
 
-Por comparar hagamos el mismo procedimiento usando el clasificador de los $35$-vecinos cercanos y miremos cómo se comporta el error a medida que la muestra crece:
+Por comparar hagamos el mismo procedimiento usando el clasificador de los $35$-vecinos cercanos y miremos cómo se comporta el error a medida que la muestra crece (la línea punteada marca el nivel del error de Bayes de acuerdo a integración numérica):
 
 ```{r,  fig.height=7, fig.width=8, fig.align='center'}
 super_sample$knn35 <- predictions_knn(super_sample, 35)
@@ -398,7 +398,7 @@ ggplot(ssamp, aes(x=index, y=value, col=variable)) +
   xlab("Tamaño de muestra") + ylab("Error") + 
   scale_color_manual(name="Modelo", labels=c("35-vecinos cercanos", "Clasificador de Bayes"), values=c("orangered", "goldenrod2")) + 
   theme(legend.position="bottom") + 
-  geom_abline(slope=0, intercept=bayes_error, color="forestgreen", linetype="dashed", alpha=0.6) + 
+  geom_abline(slope=0, intercept=bayes_error, color="coral4", linetype="dashed", alpha=0.6) + 
   annotate("text", x=75000, y=bayes_error-0.004, label="Error óptimo de Bayes", size=4)
 ```
 
@@ -408,7 +408,7 @@ Para terminar, volvamos a la gráfica que comparaba los diferentes errores de lo
 
 ```{r,  fig.height=7, fig.width=8, fig.align='center'}
 plot_errores + 
-  geom_abline(slope=0, intercept=bayes_error, color="forestgreen", linetype="dashed", alpha=0.6) + 
+  geom_abline(slope=0, intercept=bayes_error, color="coral4", linetype="dashed", alpha=0.6) + 
   annotate("text", x=100, y=bayes_error+0.006, label="Error óptimo de Bayes", size=4)
 ```
 
