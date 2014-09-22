@@ -21,6 +21,7 @@ library(nnet)
 library(reshape2)
 library(mnormt)
 library(pracma)
+library(plot3D)
 ```
 
 ## Descripción general del problema
@@ -304,7 +305,6 @@ Como dije al principio, en los modelos que hemos considerado obviamos un hecho c
 Esta observación nos permite, por ejemplo, hacer un gráfico de curvas de nivel (de probabilidad) para las dos poblaciones (marquemos de paso los centroides de cada color):
 
 ```{r, fig.height=7, fig.width=7, fig.align='center'}
-
 # Función de densidad dados los centroides y una matriz de covarianza:
 prob <- function(centroids, sigma){
   return(function(point) mean(apply(centroids, 1, function(x) dmnorm(point, x, sigma))))  
@@ -320,6 +320,7 @@ prob_orange <- prob(orange_centroids, Sigma/5)
 
 # Calculemos la probabilidad para cada color para cada punto del látice.
 grid$blue.prob <- apply(grid[,1:2], 1, prob_blue)
+points = seq(-2, 0, length=20)
 grid$orange.prob <- apply(grid[,1:2], 1, prob_orange)
 
 ggplot(grid, aes(x=X1, y=X2)) + 
@@ -330,7 +331,20 @@ ggplot(grid, aes(x=X1, y=X2)) +
   theme_bw() + xlab("x") + ylab("y")
 ```
 
-Dado que tenemos acceso a estas funciones de densidad entonces existe un modelo adicional, un modelo que no depende de datos para ser calculado, que de cierta forma hace la mejor tarea posible como clasificador: dado un punto en el plano, calcule las dos funciones de probabilidad y asigne el color de acuerdo a la que le dé el valor más alto. Ningún otro modelo puede hacer una tarea mejor (en promedio) clasificando muestras de esta población. A este modelo lo llaman en el libro _clasificador de Bayes_. (Ejercicio: calcule explícitamente la frontera del clasificador de Bayes si la distribución de cada color es una normal bivariada con covarianza $\alpha\mathbf{I}$ y centros en $(2,3)$ (para azules) y $(3,2)$ (para naranjas).)
+O en tres dimensiones:
+```{r , fig.height=7, fig.width=7, fig.align='center'}
+par(mar=c(0,0,0,0)) 
+px <- py <- seq(-3, 3, length=60)
+pb <- Vectorize(function(x,y) prob_blue(c(x,y)))
+po <- Vectorize(function(x,y) prob_orange(c(x,y)))
+zb <- outer(px, py, pb)
+zo <- outer(px, py, po)
+persp3D(x=px, y=py, z= zo, shade=.5, col="orange", alpha= .5, phi=20, box=F, contour=T, theta=-30)
+persp3D(x=px, y=py, z= zb, shade=.5, col="blue", alpha= .5, add=T, phi=20, contour=T,  theta=-30)
+```
+
+
+Dado que tenemos acceso a estas funciones de densidad entonces existe un modelo adicional, un modelo que no depende de datos para ser calculado, que de cierta forma hace la mejor tarea posible como clasificador: dado un punto en el plano, calcule las dos funciones de probabilidad y asigne el color de acuerdo a la que le dé el valor más alto (en el dibujo en tres dimensiones, elija el color la montaña que se ve (la que está afuera) sobre cada punto). Ningún otro modelo puede hacer una tarea mejor (en promedio) clasificando muestras de esta población. A este modelo lo llaman en el libro _clasificador de Bayes_. (Ejercicio: calcule explícitamente la frontera del clasificador de Bayes si la distribución de cada color es una normal bivariada con covarianza $\alpha\mathbf{I}$ y centros en $(2,3)$ (para azules) y $(3,2)$ (para naranjas).)
 
 Veamos cuál es la gráfica del clasificador de Bayes para nuestro ejemplo concreto (pongámosle la muestra de evaluación debajo):
 
