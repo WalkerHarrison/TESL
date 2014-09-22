@@ -320,7 +320,6 @@ prob_orange <- prob(orange_centroids, Sigma/5)
 
 # Calculemos la probabilidad para cada color para cada punto del látice.
 grid$blue.prob <- apply(grid[,1:2], 1, prob_blue)
-points = seq(-2, 0, length=20)
 grid$orange.prob <- apply(grid[,1:2], 1, prob_orange)
 
 ggplot(grid, aes(x=X1, y=X2)) + 
@@ -340,7 +339,7 @@ po <- Vectorize(function(x,y) prob_orange(c(x,y)))
 zb <- outer(px, py, pb)
 zo <- outer(px, py, po)
 persp3D(x=px, y=py, z= zo, shade=.5, col="orange", alpha= .5, phi=20, box=F, contour=T, theta=-30)
-persp3D(x=px, y=py, z= zb, shade=.5, col="blue", alpha= .5, add=T, phi=20, contour=T,  theta=-30)
+persp3D(x=px, y=py, z= zb, shade=.5, col="dodgerblue2", alpha= .5, add=T, phi=20, contour=T,  theta=-30)
 ```
 
 
