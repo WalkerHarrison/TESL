@@ -1,0 +1,426 @@
+---
+title: "Three Models"
+author: "J. Moreno (@infrahumano)"
+date: ""
+output:
+  html_document:
+    mathjax: http://cdn.mathjax.org/mathjax/latest/MathJax.js?config=TeX-AMS-MML_HTMLorMML
+
+---
+
+What follows is a digested reading of a piece of the second chapter of [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) by Hastie, Tibshirani and Friedman. I thought I understood most of the chapter when I first read it but recently I went back again and noticed that there were a few details I was missing. This is an attempt to fill the gaps. 
+
+Although the package [`ElemStatLearn`](http://cran.r-project.org/web/packages/ElemStatLearn/index.html) includes the _mixture_ data used for this section, I decided to generate a sample from scratch just in order to get a better understanding of the whole setting.
+
+```{r setup, message = FALSE, warning = FALSE, echo = FALSE}
+library(MASS)
+library(ggplot2)
+library(class)
+library(nnet)
+library(reshape2)
+library(mnormt)
+library(pracma)
+library(plot3D)
+```
+
+## General description
+
+Two procedures generate blue and orange points on the plane. Given a sample of $2N$ points (half of each color) we are asked to develop an strategy for deciding from which of the two procedures comes a new point. In other words, they are asking us to guess the color of the point _given_ the colors and positions of the points we already have. 
+
+## Blue and orange points
+
+* Blue: first, we generate ten points $b_k$ ($k=1,2,\ldots,10$) from a bivariate Normal distribution $N((1,0)^{T}, \mathbf{I})$ (where $\mathbf$ is the identity $2\times 2$ matrix). These will be the centroids of our blue population. In order to generate a blue point we choose $k$ at random and generate one point from $N(b_k, \mathbf{I}/5)$.
+* Orange: similarly, first we generate ten points $n_k$ ($k=1,2,\ldots,10$) from a bivariate Normal distribution $N((0,1)^{T}, \mathbf{I})$ (note the different center). These will be the centroids of our orange population. In order to generate an orange point we choose $k$ at random and generate one point from $N(n_k, \mathbf{I}/5)$.
+
+Let us generate a training sample of 200 points for building different classifiers and another sample of 10000 points for evaluating them:
+
+```{r}
+# So we all talk about the same data.
+set.seed(0)
+
+# The covariance matrix:
+Sigma <- diag(1,2)
+
+# Blue and orange centers:
+blue_centre <- c(1,0)
+orange_centre <- c(0,1)
+
+# Centroid generation:
+blue_centroids <- mvrnorm(n=10, blue_centre, Sigma)
+orange_centroids <- mvrnorm(n=10, orange_centre, Sigma)
+
+# Generic population generator given centroids, covariance matrix and number of individuals:
+observation_generator <- function(means, sigma, number){
+  D <- matrix(nrow=0, ncol=ncol(means))
+  for(i in 1:number){  
+    D <- rbind(D, mvrnorm(n=1, means[sample(1:10, 1),], sigma))
+  }
+  return(D)
+}
+
+# Generator of a sample of a 2 x number points (half blue and half orange) — I also added a numeric code: 0 is blue and 1 is orange:
+population_generator <- function(number){
+  blue <- data.frame(observation_generator(blue_centroids, Sigma/5, number), color="blue")
+  orange <- data.frame(observation_generator(orange_centroids, Sigma/5, number), color="orange")
+  observations <- rbind(blue, orange)
+  observations$color_number <- as.numeric(observations$color) - 1
+  return(observations)
+}
+
+# Our two samples:
+training_sample <- population_generator(100)
+test_sample <- population_generator(5000)
+```
+
+What does our training sample look like? (By now we should better avoid looking at our large training sample so we do not condition our manual estimations.)
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+plot_population <- function(pop){
+  ggplot(pop, aes(x=X1, y=X2, col=color)) + 
+    geom_point() + 
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) + 
+    theme_bw() + xlab("x") + ylab("y")
+}
+
+plot_population(training_sample)
+```
+
+The exercise entails taking this training sample and come up with a border or set of borders that divides with the lowest possible error rate (error rate measured as the fraction of misclassified points over all given points) the blue from the orange points in _any other sample_ of the same population. 
+
+Let us imagine for a while that we did not know how the points were generated. In real life problems that is usually the case. What options do we have for coming up with a border?
+
+One first attempt would be simply drawing one at hand on the plane. Try it out!
+
+In the next sections we will study two basic ways to formally come up with a border:
+
+```{r}
+# A lattice of points becomes really useful for plotting borders given classification rules:
+grid_generator <- function(training, test, grid.size){
+  x.vals <- seq(min(c(training[,1], test[,1])), max(c(training[,1], test[,1])), len=grid.size)
+  y.vals <- seq(min(c(training[,2], test[,2])), max(c(training[,2], test[,2])), len=grid.size)
+  data.grid <- data.frame(expand.grid(x.vals, y.vals)) 
+  colnames(data.grid) <- c("X1", "X2")
+  return(data.grid)
+}
+
+# Let us create one 100 x 100:
+grid.size <- 100
+grid <- grid_generator(training_sample, test_sample, grid.size)
+```
+
+## First approach: linear model
+
+The first approach obtains a border given by a linear polynomial. We use our training sample to find a vector  $\beta = (\beta_0, \beta_1, \beta_2)'$ and define a function on the plane: $$f \colon (x,y)' \mapsto \langle(1,x,y), \beta\rangle = \beta_0 + \beta_1 x + \beta_2 y.$$ We say that $(x,y)$ blue or orange depending on the value of $f(x,y)$: $$C(x,y) = \begin{cases} \mbox{Orange} &\mbox{if } f(x,y) > 0.5 \\ 
+\mbox{Blue} & \mbox{if  } f(x,y) \leq 0.5 \end{cases}$$
+
+We want to choose $\beta$ in a way that minimizes the error in the training sample and we hope this choice will also give us a low error rate with any other sample. Hope is all we have.
+
+Does not matter what $\beta$ we choose the border is a straight line (Which one?). If you had to suggest one straight line by hand what would it be?
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+# This gives us the best beta given our training sample and our definition of error:
+linear_model <- lm(color_number ~ X1 + X2, training_sample)
+
+# This function implements the classification criterion described above:
+linear_classifier <- function(point, model){
+  expanded_point <- c(1, point)
+  beta <- coef(model)
+  fxy <- expanded_point %*% beta
+  return(ifelse(fxy > 0.5, 1, 0))
+}
+
+# This calculates the slope and intercept of the border line given the model:
+intercept_slope <- function(model){
+  cf <- coef(model)
+  intercept <- -(cf[1] - 0.5)/cf[3]
+  slope <- -cf[2]/cf[3]
+  return(c(intercept, slope))
+}
+
+# This generates a plot of the linear model on top of whatever sample you want:
+plot_linear_model <- function(samp, model, grid){
+  grid$color <- apply(grid[,1:2], 1, function(x) linear_classifier(x, model))
+  insl <- intercept_slope(model)
+  ggplot(grid, aes(x=X1, y=X2)) +
+    geom_point(aes(fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) +
+    geom_point(data=samp, aes(x=X1, y=X2, col=color)) +
+    geom_abline(intercept=insl[1], slope=insl[2], color="red") +
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    theme_bw() + xlab("x") + ylab("y") 
+}
+
+plot_linear_model(training_sample, linear_model, grid)
+```
+
+And the error rate?
+
+```{r}
+# Error function:
+classification_error <- function(observed, predictions){
+  return(mean(as.numeric(observed != predictions)))
+}
+
+linear_predictor <- function(x) linear_classifier(x, linear_model)
+
+classification_error_linear <- function(data, predictor){
+  predictions <- apply(data[,1:2], 1, predictor)
+  return(classification_error(data$color_number, predictions))
+}
+  
+# Error with the training sample:
+error_training_linear <- classification_error_linear(training_sample, linear_predictor)
+
+# Error with the test sample:
+error_test_linear <- classification_error_linear(test_sample, linear_predictor)
+```
+
+For the training sample the error is `r error_training_linear` and for the test sample is `r error_test_linear`. 
+
+## Second approach: neighbors' pressure
+
+Our second approach is a kind of local democracy. We call it nearest neighbors method. For this model we choose $k\in \mathbb{N}$ odd (to make things easier) and for each point on the plan we find the closest $k$ points in the training sample and check which color has more representatives in this little neighborhood. That way we choose the color for our new point. 
+
+What happens with $k=1$?
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+
+# This function colors any given set of points and k according to the rule described above:
+predictions_knn <- function(data, k){
+  output <- knn(training_sample[,1:2],data[,1:2], training_sample[,4], k=k)
+  return(as.numeric(as.character(output)))
+}
+
+# Plotting function of the border and any sample (look how we use the grid):
+plot_knn_model <- function(samp, grid, k){
+  grid$color <- predictions_knn(grid, k)
+  ggplot(grid, aes(X1, X2, z=color)) +  
+    geom_point(aes(X1, X2, fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) +
+    geom_point(data=samp, aes(x=X1, y=X2, col=color)) + 
+    stat_contour(color="red", bins=1) +
+    scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+    theme_bw() + xlab("x") + ylab("y") 
+}
+
+plot_knn_model(training_sample, grid, 1)
+```
+
+Is it a good model?
+
+```{r}
+classification_error_knn <- function(data, k){
+  return(classification_error(data$color_number, predictions_knn(data, k)))
+}
+
+error_training_knn1 <- classification_error_knn(training_sample, 1)
+
+error_test_knn1 <- classification_error_knn(test_sample, 1)
+```
+
+With $k=1$ the training sample error is `r error_training_knn1` and the test sample error is `r error_test_knn1` (way larger than with the linear model). It should not be a surprise that the training error sample is zero: since $k=1$ each point ends up choosing itself as _the_ nearest neighbor and therefore picks the color it already has. For the same reason the test sample error is high: the model is completely focused on the very particular configuration of the training sample. It is bad at detecting global patterns.
+
+We can try now something less radical ($k=15$): 
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+
+
+error_training_knn15 <- classification_error_knn(training_sample, 15)
+
+error_test_knn15 <- classification_error_knn(test_sample, 15)
+plot_knn_model(training_sample, grid, 15)
+```
+
+Here the neighbors model is not as manipulable by the training sample and for the same reason it is more accurate: the training sample error is `r error_training_knn15` and the test sample error is `r error_test_knn15`. This model beats the linear one!
+
+## Freedom and error
+
+When comparing various models we need to determine a measure of complexity so we know, for instance, if the linear one is preferable to a 15-nearest neighbors model. One possibility is to define complexity as a quantity related to the number of variables (in a vague sense) required to find in order to build them. This number is called [the degrees of freedom](http://en.wikipedia.org/wiki/Degrees_of_freedom_(statistics)) of the model. In the linear model considered above we had only three degrees of freedom (one for each coordinate of $\beta$.) What about the nearest neighbors models?
+
+Let us think about it: if $k=1$ then each of the points from the training sample end up determining one variable. Therefore, 1-nearest neighbor has as many degrees of freedom as the number of points in the training sample. As $k$ rises, the degrees of freedom of the model decrease. When $k$ is exactly the number of points in the training sample the model has only one degree of freedom. In general, if the training sample is of size $N$ then the $k$-nearest neighbors model would have, then, $N/k$ degrees of freedom. 
+
+Now we can plot errors in the training sample and test sample for different models using the same coordinate system: with degrees of freedom on the $x$-axis and error rate as the $y$-axis:
+
+```{r, fig.height=7, fig.width=8, fig.align='center'}
+# Training and test errors of k-NN models for a set of k's:
+error_collector <- function(ks){
+  D <- matrix(nrow=0, ncol=3)
+  for(k in ks){  
+    error_training_knn <- classification_error_knn(training_sample, k)
+    error_test_knn <- classification_error_knn(test_sample, k)
+    D <- rbind(D, c(k, error_training_knn, error_test_knn))
+  }
+  D <- as.data.frame(D)
+  names(D) <- c("k", "error.training", "error.test")
+  D$degrees <- 200/D$k
+  return(D)
+}
+
+# Errors for k = 2n-1 con n = 1, 2, ..., 100:
+errors <- error_collector(1:100 * 2 - 1)
+
+# Which one of the test sample errors is the lowest?:
+
+best_k <- errors[errors$error.test == min(errors$error.test),]
+
+# Degrees of freedom of the linear model:
+lm.df <- 3
+
+# Let's plot this shit:
+errors <- melt(errors, id.vars = c("k", "degrees"))
+plot_errores <- ggplot(errors, aes(x=degrees, y=value, col=variable)) + 
+  geom_line(method="loess", size = .8, alpha=0.4) + 
+  geom_smooth(method="loess", size = 1, se = FALSE) + 
+  scale_x_log10() + theme_bw() + theme(legend.position="bottom") +
+  xlab("Degrees of freedom (N/k)") + ylab("Error") +
+  scale_color_manual(name="Sample", labels=c("Training", "Test"), values=c("forestgreen", "firebrick2")) +
+  geom_point(data=data.frame(x=lm.df, y=error_training_linear), aes(x=x,y=y), color="forestgreen", shape= 15, size=5) +
+  geom_point(data=data.frame(x=lm.df, y=error_test_linear), aes(x=x,y=y), color="firebrick2", shape= 15, size=5) + 
+  annotate("text", x =lm.df, y = error_training_linear - 0.015, label = "Linear model error\n (training)", size=4) +
+  annotate("text", x =lm.df, y = error_test_linear + 0.015, label = "Linear model error\n (test)", size=4)
+
+plot_errores
+```
+
+Green and red curves are smoothed versions of the error rate curves (faded) for the $k$-nearest neighbors models for $k=2n-1$ con $n=1,2, \ldots, 100$. Note that the scale of the degrees of freedom axis is logarighmic. The two squares represent the errors for the linear model (at the 3 degrees of freedom level.)
+
+As expected, as the degrees of freedom rise the models become better and better (more flexible) at fitting the training sample. 
+
+With the training sample, however, the story is a bit different: for low and high degrees of freedom the error rate is high but in between there are $k$-nearest neighbors models with lower error rates. The minimum is attained when $k$ is `r best_k[1]`. The test sample error rate for this model is `r best_k[3]`. This is the plot of the border for this model using the test sample as a reference:
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+plot_knn_model(test_sample, grid, 35)
+```
+
+# Ideal approach: the best model of all
+
+As I said early on, in these models we have ignored a crucial fact: in this particular case we have an explicit description of the distribution of our colored points. We can, for instance, calculate the probabilities that a point is blue or that the same point is orange using probability density functions: the density for color $C$ is the mean of the densities for each of the ten bivalued normal distributions with centroids of the corresponding color. 
+
+Give this, we can easily plot contour curves for the probabilities of the two populations (centroids are marked with squares):
+
+```{r, fig.height=7, fig.width=7, fig.align='center'}
+# Density function generator
+prob <- function(centroids, sigma){
+  return(function(point) mean(apply(centroids, 1, function(x) dmnorm(point, x, sigma))))  
+}
+
+# Blue density function
+prob_blue <- prob(blue_centroids, Sigma/5)
+
+# Orange density function
+prob_orange <- prob(orange_centroids, Sigma/5)
+
+# Probability for each point in the lattice for each color.  
+grid$blue.prob <- apply(grid[,1:2], 1, prob_blue)
+grid$orange.prob <- apply(grid[,1:2], 1, prob_orange)
+
+# Plot:
+ggplot(grid, aes(x=X1, y=X2)) + 
+  geom_contour(aes(z=blue.prob), color="dodgerblue2") + 
+  geom_contour(aes(z=orange.prob), color="orange") + 
+  geom_point(data=data.frame(blue_centroids), aes(x=X1, y=X2), color="dodgerblue2", shape=15, size=2.5) + 
+  geom_point(data=data.frame(orange_centroids), aes(x=X1, y=X2), color="orange", shape=15, size=2.5) + 
+  theme_bw() + xlab("x") + ylab("y")
+```
+
+Or we can explicitly plot the density functions in three dimensions: 
+
+```{r , fig.height=7, fig.width=7, fig.align='center'}
+par(mar=c(0,0,0,0)) 
+px <- py <- seq(-3, 3, length=60)
+pb <- Vectorize(function(x,y) prob_blue(c(x,y)))
+po <- Vectorize(function(x,y) prob_orange(c(x,y)))
+zb <- outer(px, py, pb)
+zo <- outer(px, py, po)
+persp3D(x=px, y=py, z= zo, shade=.5, col="orange", alpha= .5, phi=20, box=F, contour=T, theta=-30)
+persp3D(x=px, y=py, z= zb, shade=.5, col="dodgerblue2", alpha= .5, add=T, phi=20, contour=T,  theta=-30)
+```
+
+Since we have access to these density functions then there is an additional model we can try, this model does not depend on the samples and it is, in a way, the best possible doing the classification: given a point on the plane, assign the color that gives this point the highest probability. In the 3D plot: choose the color of the external blanket above the point. This model is called the Bayes Classifier (Exercise: calculate explicitly the Bayes Classifier border if the distribution for each color is bivariate normal with covariance $\alpha\mathbf{I}$ and centers at $(2,3)$ (blue) and $(3,2)$ (oranges).)
+
+Let us see what is the border of the Bayes classifier in this case (below we have the test sample):
+
+```{r,  fig.height=7, fig.width=7, fig.align='center'}
+# The bayes classifier:
+bayes_classifier <- function(point){
+  return(ifelse(prob_blue(point) >=  prob_orange(point), 0, 1))
+}
+
+# Plot:
+grid$color <- apply(grid[,1:2], 1, bayes_classifier)
+ggplot(grid, aes(X1, X2, z=color)) +  
+  geom_point(aes(X1, X2, fill=as.factor(color)), size=1, col="white", shape=21, alpha=0.5) + 
+  geom_point(data=test_sample, aes(x=X1, y=X2, col=color)) +
+  stat_contour(bins=1, color="red") +
+  scale_color_manual(guide="none", values=c("dodgerblue2", "orange")) +
+  scale_fill_manual(guide="none", values=c("dodgerblue2", "orange")) +
+  theme_bw() + xlab("x") + ylab("y") 
+```
+
+The test sample error for the Bayes classifier is `r classification_error(test_sample$color_number, apply(test_sample[,1:2], 1, bayes_classifier))`. A little bit bigger than the one we obtained for the $35$-nearest neighbors model. We know that in average, if we consider many different samples, the error of the Bayes classifier will beat that of any other model. This expected error of the Bayes classifier is called the _optimal Bayes error rate_. 
+
+Let us do it carefully: if $p_b(x,y)$ and $p_o(x,y)$ are the density functions for blue and orange points respectively, then (assuming that there are half blue and half orange) the probability of error would be: $$BE = \frac{1}{2} \int_{C_b} p_o + \frac{1}{2} \int_{C_o}  p_b$$ where $C_b$ and $C_o$ are the blue and orange regions according to the Bayes classifier. Geometrically, this quantity corresponds to half the volume of the space below the hidden blankets (the losing color) in the 3D plot. In other words, if we define error density as: $$ED(x,y) = \begin{cases} p_o(x,y) &\mbox{si  } p_o(x,y) < p_b(x,y) \\ 
+p_b(x,y) & \mbox{si  } p_o(x,y) \geq p_b(x,y)\end{cases}$$ then $$BE = \frac{1}{2} \int_{\mathbb{R}^2} ED.$$
+
+```{r}
+error_density <- function(x, y){
+  point <- c(x,y)
+  pblue <- prob_blue(point)
+  porange <- prob_orange(point)
+  return(ifelse(pblue < porange , pblue, porange))
+}
+
+# Numeric integration: 
+integral_error <- integral2(error_density, -50, 50, -50, 50, vectorized=F) 
+bayes_error <- integral_error$Q /2
+```
+
+Thus, the optimal Bayes error for this setting is `r bayes_error`.
+
+We could obtain the Bayes error empirically calculating the average of errors for a sequence of samples. For this I pregenerated [a sample of 100 000 points](https://github.com/finiterank/TESL/blob/master/super.sample.Rda) and applied the Bayes classifier: 
+
+```{r ,  fig.height=7, fig.width=8, fig.align='center'}
+# Load the super_sample:
+load("super.sample.Rda")
+
+# Compare prediction of Bayes with actual color:
+super_sample$comp <- as.numeric(super_sample$color_number != super_sample$bayes)
+
+# Now, for N=1, ..., 100.000 let us calculate the error for individuals 1 to N. 
+super_sample$cumerror <- cumsum(super_sample$comp)/1:nrow(super_sample)
+
+# Finally, let us plot: 
+ggplot(super_sample, aes(x=1:nrow(super_sample), y=cumerror)) + 
+  geom_line(color="goldenrod2") + theme_bw() + xlab("Sample size") + ylab("Error")
+```
+
+The average error for this stack of samples is `r mean(super_sample$cumerror)`. Good enough. 
+
+Just as a comparison, let us try the $35$-nearest neighbors classifier with the same stack of samples to estimate its actual expected error rate (the pointed line is the level of the Bayes error rate according to numeric integration):
+
+```{r,  fig.height=7, fig.width=8, fig.align='center'}
+super_sample$knn35 <- predictions_knn(super_sample, 35)
+super_sample$comp.knn <- as.numeric(super_sample$color_number != super_sample$knn35)
+super_sample$cumerror.knn <- cumsum(super_sample$comp.knn)/1:nrow(super_sample)
+ssamp <- data.frame(index = 1:nrow(super_sample), super_sample[, c("cumerror.knn", "cumerror")]) 
+ssamp <- melt(ssamp, id.vars = "index")
+ggplot(ssamp, aes(x=index, y=value, col=variable)) + 
+  geom_line() + theme_bw() + 
+  xlab("Size of sample") + ylab("Error") + 
+  scale_color_manual(name="Modelo", labels=c("35-nearest neighbors", "Bayes classifier"), values=c("orangered", "goldenrod2")) + 
+  theme(legend.position="bottom") + 
+  geom_abline(slope=0, intercept=bayes_error, color="coral4", linetype="dashed", alpha=0.6) + 
+  annotate("text", x=75000, y=bayes_error-0.004, label="Optimal Bayes error rate", size=4)
+```
+
+The average of the $35$-nearest neighbors model is `r mean(super_sample$cumerror.knn)`, a bit worse than the Bayes classifier.
+
+As a conclusion, let us go back to the plot comparing the different errors of the models and include a line for the optimal Bayes error:
+
+```{r,  fig.height=7, fig.width=8, fig.align='center'}
+plot_errores + 
+  geom_abline(slope=0, intercept=bayes_error, color="coral4", linetype="dashed", alpha=0.6) + 
+  annotate("text", x=100, y=bayes_error+0.006, label="Optimal Bayes error rate", size=4)
+```
+
+Of course, in the outside world there are not explicit distributions that we can use to build our classifier, so the game becomes infering, from the given data, particularities of its (implicit) distribution so we can improve our chances of finding/building a model as close to Bayes' as possible.
