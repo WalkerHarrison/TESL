@@ -29,7 +29,7 @@ Two procedures generate blue and orange points on the plane. Given a sample of $
 
 ## Blue and orange points
 
-* Blue: first, we generate ten points $b_k$ ($k=1,2,\ldots,10$) from a bivariate Normal distribution $N((1,0)^{T}, \mathbf{I})$ (where $\mathbf$ is the identity $2\times 2$ matrix). These will be the centroids of our blue population. In order to generate a blue point we choose $k$ at random and generate one point from $N(b_k, \mathbf{I}/5)$.
+* Blue: first, we generate ten points $b_k$ ($k=1,2,\ldots,10$) from a bivariate Normal distribution $N((1,0)^{T}, \mathbf{I})$ (where $\mathbf{I}$ is the identity $2\times 2$ matrix). These will be the centroids of our blue population. In order to generate a blue point we choose $k$ at random and generate one point from $N(b_k, \mathbf{I}/5)$.
 * Orange: similarly, first we generate ten points $n_k$ ($k=1,2,\ldots,10$) from a bivariate Normal distribution $N((0,1)^{T}, \mathbf{I})$ (note the different center). These will be the centroids of our orange population. In order to generate an orange point we choose $k$ at random and generate one point from $N(n_k, \mathbf{I}/5)$.
 
 Let us generate a training sample of 200 points for building different classifiers and another sample of 10000 points for evaluating them:
