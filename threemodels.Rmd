@@ -8,7 +8,7 @@ output:
 
 ---
 
-What follows is a digested reading of a piece of the second chapter of [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) by Hastie, Tibshirani and Friedman. I thought I understood most of the chapter when I first read it but recently I went back again and noticed that there were a few details I was missing. This is an attempt to fill the gaps. (The original version, in Spanish, is [here](finiterank.github.io/TESL/tresmodelos.html).) 
+What follows is a digested reading of a piece of the second chapter of [_The Elements of Statistical Learning_](http://statweb.stanford.edu/~tibs/ElemStatLearn/) by Hastie, Tibshirani and Friedman. I thought I understood most of the chapter when I first read it but recently I went back again and noticed that there were a few details I was missing. This is an attempt to fill the gaps. (The original version, in Spanish, is [here](http://finiterank.github.io/TESL/tresmodelos.html).) 
 
 Although the package [`ElemStatLearn`](http://cran.r-project.org/web/packages/ElemStatLearn/index.html) includes the _mixture_ data used for this section, I decided to generate a sample from scratch just in order to get a better understanding of the whole setting.
 
